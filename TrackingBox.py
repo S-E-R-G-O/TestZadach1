@@ -1,115 +1,140 @@
+from statistics import mean
+
 import cv2
 import numpy as np
-import HungarianAlgorithm as HA
+import HungarianAlgorithm as hm
+
+
 class Box:
-    Green_Clr = (100,255,0) # Палитра зелёного цвета в BGR
-    Red_Clr = (0,0,255) # Палитра красного цвета в BGR
-    lim_detArea = 8000 # Граничное значение при котором происходит отрисовка объекта
-    id = 0 # Номер id объекта обновляется при появлении нового объекта в кадре
-    track_hists = {} 
-    del_hists = {} 
+    Green_Clr = (100, 255, 0)  # Зеленый
+    Red_Clr = (0, 0, 255)  # Красный
+    det_limArrea = 8000
+    track_hist = {}
+    del_hists = {}
+    id_counter = 0
 
+    def __init__(self, x, y, w, h):
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.id = Box.id_counter
+        Box.id_counter += 1
 
-    #Инициализируем координаты рамки и id которое увеличивается каждый раз
-    #когда появляется новый экземпляр класса BOX
-    def __init__(self,x,y,w,h):
-        self.x = x
-        self.y = y
-        self.w = w
-        self.h = h
-        self.id = Box.id
-        Box.id += 1
-    # Возвращение размеров прямоугольника
     def shape(self):
         return self.x, self.y, self.w, self.h
 
     def rectangle(self):
         return [self.x, self.y, self.w + self.x, self.h + self.y]
 
-    #Задаем условия отрисовки рамки
     @classmethod
-    def det_area_create(cls, contour):
-        detection = []
-        if len(contour) != 0:
-            for cnt in contour:
-                area = cv2.contourArea(cnt) #Вычесление площади вокруг объекта
-
-            #Объявляем условие отрисовки рамки вокруг объекта
-                if area > cls.lim_detArea:
-                    x, y, w, h = cv2.boundingRect(cnt)
-                    detection.append(cls(x,y,w,h))
-        return detection
+    def det_area_create(cls, contours):
+        return [cls(*cv2.boundingRect(cnt)) for cnt in contours if cv2.contourArea(cnt) > cls.det_limArrea]
 
     @classmethod
-    def trackingCreation(cls, detection, tracking):
-        if len(tracking) == 0:
-            return detection
-        if len(detection) == 0:
+    def trackingCreation(cls, detections, trackers):
+        if not trackers:
+            return detections
+        if not detections:
+            for t in trackers:
+                cls.del_hists.update({t.id: cls.track_hist.pop(t.id)})
+                print("DEL", t.id, len(cls.del_hists[t.id]))
+                del t
             return []
+            # Формируем матрицу весов IntersectionOverUnion
+        IoU = np.array([[hm.IntersectionOverUnion(det, trk) for trk in trackers] for det in detections],
+                       dtype=np.float32)
+        # Пропускаем матрицу весов IntersectionOverUnion через венгерский алгоритм
+        matches, unmatched_det, unmatched_trk = hm.hungarian(IoU, trackers, detections)
+        # matches - Список для пар найденных сопоставлений
+        # unmatched_det - Список для несопоставленных детекций
+        # unmatched_trk - Список для несопоставленных трекеров, отслеживаемый объект пропал из кадра - надо удалить
 
-        # Формирование матрицы весов IoU - intersection over union
-        IoU = np.zeros((len(detection), len(tracking)), dtype=np.float32)
+        # через матрицу соответстви делаем отдетектированные объекты, тречными
+        for mtcd in matches:
+            # id отдетектированного объекта, делаем тем же, чо и отслеживаемого
+            detections[mtcd[0]].id = trackers[mtcd[1]].id
+            # детектируемый объект становится обновленным отслежеваемым
+            trackers[mtcd[1]] = detections[mtcd[0]]
+
+        # добавляем нераспределенне отдетектированные объект к новым отслеживаемые
+        trackers.extend(detections[i] for i in unmatched_det)
 
 
+        # удаляем объекты, которые мы тречили, но их нет в новом кадре, значит они исчезли
+        for ut in sorted(unmatched_trk, reverse=True):
+            # Записываем массив гистограм удаляемого оюъекта, ключ - id удаленного
+            if trackers[ut].id in cls.track_hist:
+                cls.del_hists.update({trackers[ut].id: cls.track_hist.pop(trackers[ut].id)})
+            else:
+                cls.del_hists.update({trackers[ut].id: []})
+            # Удаляем трекер
+            print("DEL", trackers[ut].id, len(cls.del_hists[trackers[ut].id]))
+            del trackers[ut]
 
-        #Выполнение перебора всех распознаных объектов (detection) и всех отслеживаемых объектов (tracking)
-        # и для каждой пары объектов вычисляется площадь пересечения их областей (Intersection over Union).
-        for i, det in enumerate(detection):
-            for j, tra in enumerate(tracking):
-                IoU[i][j] = HA.IntersectionOverUnion(det,tra)
-        
-        
-        
-        matches, unmatched_detections, unmatched_trackers = HA.hungarian(IoU,tracking,detection)
-        
-        for mtc in matches:
-            #Сопоставляем идентификатор обнаруженного объекта с отслеживаемым объектом.
-            detection[mtc[0]].id = tracking[mtc[1]].id
+        return trackers
 
-            tracking[mtc[1]] = detection[mtc[0]]
-
-        #Нераспознанный объект становится новым отслеживаемым
-        for i in unmatched_detections:
-            tracking.append(detection[i])
-
-       
-        u_t = -np.sort(-unmatched_trackers)
-        #Обновляем список удаленны гистограмм
-        for i in u_t:
-            Box.del_hists.update({tracking[i].id:Box.track_hists.pop(tracking[i].id)})
-            del tracking[i]
-        return tracking
-    
-
-    #Создаем функцию формирования гистограмм
     @classmethod
     def histogram(cls, frame, boxes):
-        if len(boxes) > 0:
-            for box in boxes:
-                x, y, w, h = box.shape()
-                tr_frame = frame[y:y+h, x:x+w]
-                #Строим гистограмму для объекта
-                hist = cv2.calcHist([tr_frame], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-                cv2.normalize(hist, hist).flatten()
-                
-                #Записываем гистограмму текущего кадра в объект 
-                if box.id in cls.track_hists: 
-                    cls.track_hists[box.id].append(hist)
-                else:
-                    cls.track_hists[box.id] = [hist]
+        frame_height, frame_width = frame.shape[0], frame.shape[1]
+        # Проходим по каждому ограничивающему прямоугольнику (box) в переданных рамках
+        for box in boxes:
+            # Извлекаем координаты и размеры текущего ограничивающего прямоугольника
+            x, y, w, h = box.shape()  # Предполагается, что box.shape() возвращает (x, y, width, height)
+            if y == 0 or y + h >= frame_height:
+                return
+            # Обрезаем изображение (кадр) по координатам ограничивающего прямоугольника
+            tr_frame = frame[y:y + h, x:x + w]
 
-     
+            # Вычисляем цветовую гистограмму для обрезанного кадра
+            new_hist = cv2.calcHist([tr_frame],
+                                    [0, 1, 2],  # Каналы цветов (BGR)
+                                    None,  # Не используем маску
+                                    [8, 8, 8],  # Число бинов для каждого канала
+                                    [0, 256, 0, 256, 0, 256])  # Диапазоны значений цвета
 
+            # Нормализуем гистограмму, чтобы сумма всех значений была равна 1
+            cv2.normalize(new_hist, new_hist)
+
+            # Сохраняем новую гистограмму
+
+            if box.id in cls.track_hist:
+                cls.track_hist[box.id].append(new_hist)
+            else:
+               
+                print("NEW", box.id)
+                hist_weight = cls.compare_histograms(new_hist)
+                if hist_weight:
+                    for hw_id in hist_weight:
+                        # среднее значение корреляции между новой и старой гистограммой
+                        print(f"{hw_id}: {mean(hist_weight[hw_id])}")
+                cls.track_hist[box.id] = [new_hist]
 
     @classmethod
-    #Отрисовываем рамку и точку-центр внутри рамки
-    def drawing_box(cls, frame, boxes):
-        if len(boxes) > 0:
-            for box in boxes:
-                x, y, w, h = box.shape()
-                cx = x + w // 2
-                cy = y + h // 2
-                cv2.putText(frame, str(box.id),(cx, cy -7), 0,0.5, cls.Red_Clr, 2)
-                cv2.rectangle(frame,(x,y),(x+w, y+h), cls.Green_Clr,2)
-                cv2.circle(frame, (cx,cy), 2, cls.Red_Clr, -1)
+    def compare_histograms(cls, new_hist):
+           # Создаем словарь для хранения значений корреляции между новым гистограммой и старыми
+        hist_weight = {}
+         # Если нет ни одной сохраненной гистограммы, возвращаем None
+        if len(cls.del_hists) == 0:
+            return None
+        for i in cls.del_hists:
+             # Сравниваем new_hist с каждой сохранённой гистограммой с помощью метода cv2.compareHist
+            for hist in cls.del_hists[i]:
+                res = cv2.compareHist(new_hist, hist, cv2.HISTCMP_CORREL)
+                 # Если ключ i уже присутствует в словаре hist_weight, добавляем результат в соответствующий список
+                if i in hist_weight:
+                    hist_weight[i].append(res)
+                else:
+                     # Если ключа i нет, создаем новый список с первым результатом
+                    hist_weight[i] = [res]
+            
+    # Возвращаем словарь hist_weight, содержащий степени корреляции для каждой ключевой гистограммы
+        return hist_weight
+
+    @classmethod
+    def drawBox(cls, frame, boxes):
+        for box in boxes:
+            x, y, w, h = box.shape()
+            cx, cy = x + w // 2, y + h // 2
+            cv2.putText(frame, str(box.id), (cx, cy - 7), 0, 0.5, cls.Red_Clr, 2)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), cls.Green_Clr, 2)
+            cv2.circle(frame, (cx, cy), 2, cls.Red_Clr, -1)
+
         return frame
