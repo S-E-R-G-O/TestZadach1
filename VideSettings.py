@@ -1,20 +1,28 @@
 import cv2  # Импортируем библиотеку OpenCV для работы с изображениями и видео
 
 class Processing:
-    def __init__(self, fileName):
+    def __init__(self,  fileName1, fileName2):
         # Инициализируем объект класса
         self.firstName = None  # Хранит первый кадр в градациях серого
-        self.stream = cv2.VideoCapture(fileName)  # Открываем видеофайл с указанным именем
-
+        self.stream1 = cv2.VideoCapture(fileName1)  # Открываем видеофайл с указанным именем
+        #self.firstName = None  # Хранит первый кадр в градациях серого
+        self.stream2 = cv2.VideoCapture(fileName2)
+       
+        
     def __del__(self):
         # Освобождаем ресурсы при уничтожении объекта
-        self.stream.release()  # Закрываем захват видео, чтобы освободить ресурсы
+        self.stream1.release()  # Закрываем захват видео, чтобы освободить ресурсы
+        self.stream2.release()
 
     def detection(self):
         # Метод для обнаружения изменений между кадрами
-        ret, frame = self.stream.read()  # Читаем следующий кадр из видео
+        ret1, frame1 = self.stream1.read() 
+        ret2, frame2 = self.stream2.read() # Читаем следующий кадр из видео
+        #Объеденить два окна в один
+        frame = cv2.hconcat([frame1, frame2])
 
-        if not ret:
+
+        if not ret1 or not ret2:
             # Проверка на успешность чтения кадра
             raise Exception("Failed to open video file")  # Если не удалось получить кадр, выбрасываем исключение
             

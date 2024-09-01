@@ -5,7 +5,8 @@ from TrackingBox import Box
 detection = []
 tracking = []
 
-ob_det = Processing('3.Camera 2017-05-29 16-23-04_137 [3m3s].avi')
+ob_det = Processing('3.Camera 2017-05-29 16-23-04_137 [3m3s].avi', '4.Camera 2017-05-29 16-23-04_137 [3m3s].avi')
+
 
 while True: 
     try: 

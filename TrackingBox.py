@@ -34,7 +34,10 @@ class Box:
             return detections
         if not detections:
             for t in trackers:
-                cls.del_hists.update({t.id: cls.track_hist.pop(t.id)})
+                if t.id in cls.track_hist:
+                    cls.del_hists.update({t.id: cls.track_hist.pop(t.id)})
+                else:
+                    cls.del_hists.update({t.id: []})
                 print("DEL", t.id, len(cls.del_hists[t.id]))
                 del t
             return []
@@ -81,32 +84,48 @@ class Box:
             if y == 0 or y + h >= frame_height:
                 return
             # Обрезаем изображение (кадр) по координатам ограничивающего прямоугольника
-            tr_frame = frame[y:y + h, x:x + w]
+            # Верх и низ объекта 
+            tr_frame_top = frame[y: y + h, x: x + w]
+            tr_frame_bot = frame[y + h: frame_height, x: x + w]
 
             # Вычисляем цветовую гистограмму для обрезанного кадра
-            new_hist = cv2.calcHist([tr_frame],
+            new_hist_top = cv2.calcHist([tr_frame_top],
                                     [0, 1, 2],  # Каналы цветов (BGR)
                                     None,  # Не используем маску
                                     [8, 8, 8],  # Число бинов для каждого канала
                                     [0, 256, 0, 256, 0, 256])  # Диапазоны значений цвета
 
             # Нормализуем гистограмму, чтобы сумма всех значений была равна 1
-            cv2.normalize(new_hist, new_hist)
+            cv2.normalize(new_hist_top, new_hist_top)
+
+            new_hist_bot = cv2.calcHist([tr_frame_bot],[0, 1, 2],  # Каналы цветов (BGR)
+                                    None,  # Не используем маску
+                                    [8, 8, 8],  # Число бинов для каждого канала
+                                    [0, 256, 0, 256, 0, 256])
+            cv2.normalize(new_hist_bot, new_hist_bot)
 
             # Сохраняем новую гистограмму
 
             if box.id in cls.track_hist:
-                cls.track_hist[box.id].append(new_hist)
+                cls.track_hist[box.id].append(new_hist_top)
+                cls.track_hist[box.id].append(new_hist_bot)
             else:
                
                 print("NEW", box.id)
-                hist_weight = cls.compare_histograms(new_hist)
-                if hist_weight:
-                    for hw_id in hist_weight:
-                        # среднее значение корреляции между новой и старой гистограммой
-                        print(f"{hw_id}: {mean(hist_weight[hw_id])}")
-                cls.track_hist[box.id] = [new_hist]
+                hist_weight_top = cls.compare_histograms(new_hist_top)
+                hist_weight_bot = cls.compare_histograms(new_hist_bot)
 
+                if hist_weight_top:
+                    for hw_id in hist_weight_top:
+                        # среднее значение корреляции между новой и старой гистограммой
+                        print(f"ВЕРХНЯЯ ГИСТОГРАММА: {hw_id}: {mean(hist_weight_top[hw_id])}")
+                cls.track_hist[box.id] = [new_hist_top]
+
+                if hist_weight_bot:
+                    for hw_id in hist_weight_bot:
+                        # среднее значение корреляции между новой и старой гистограммой
+                        print(f"НИЖНЯЯ ГИСТОГРАММА: {hw_id}: {mean(hist_weight_bot[hw_id])}")
+                cls.track_hist[box.id].append(new_hist_bot)
     @classmethod
     def compare_histograms(cls, new_hist):
            # Создаем словарь для хранения значений корреляции между новым гистограммой и старыми
@@ -135,6 +154,7 @@ class Box:
             cx, cy = x + w // 2, y + h // 2
             cv2.putText(frame, str(box.id), (cx, cy - 7), 0, 0.5, cls.Red_Clr, 2)
             cv2.rectangle(frame, (x, y), (x + w, y + h), cls.Green_Clr, 2)
-            cv2.circle(frame, (cx, cy), 2, cls.Red_Clr, -1)
-
+            #cv2.circle(frame, (cx, cy), 2, cls.Red_Clr, -1)
+            #Отрисовка прямой линии в центре коробки от одной границы до другой 
+            cv2.line(frame, (x, cy), (x + w, cy), cls.Red_Clr, 2)
         return frame
